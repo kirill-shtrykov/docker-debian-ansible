@@ -19,7 +19,8 @@ RUN apt update && \
       bash \
       net-tools \
       ca-certificates \
-      systemd && \
+      systemd \
+      procps && \
     apt clean
 
 RUN if [ ! -e /sbin/init ]; then ln -s /lib/systemd/systemd /sbin/init ; fi
