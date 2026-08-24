@@ -74,37 +74,6 @@ jobs:
 
           matrix="$(
             echo "$changed_dirs" |
-            jq --arg latest "$latest" -Rn '
-              [inputs | select(length > 0)] |
-              map(
-                . as $dir |
-                ($dir | ltrimstr("debian-")) as $ver |
-                {
-                  version: $ver,
-                  path:    $dir,
-                  image_version: (
-                    try (
-                      ($dir + "/Dockerfile") |
-                      input |
-                      split("\n")[] |
-                      select(startswith("ENV IMAGE_VERSION=")) |
-                      ltrimstr("ENV IMAGE_VERSION=") |
-                      split(" ")[0] |
-                      ltrimstr("\"") | rtrimstr("\"")
-                    ) catch ""
-                  ),
-                  latest: ($ver == $latest)
-                }
-              ) |
-              { include: . }
-            '
-          )"
-
-          # Fallback: extract image_version via sed when jq input() is unavailable
-          # (jq input() reads from file list; we instead pass the value via awk).
-          # Re-build the matrix with image_version extracted from each Dockerfile.
-          matrix="$(
-            echo "$changed_dirs" |
             while IFS= read -r dir; do
               ver="${dir#debian-}"
               image_version="$(
@@ -114,7 +83,7 @@ jobs:
               )"
               echo "$ver|$dir|$image_version"
             done |
-            jq --arg latest "$latest" -Rn '
+            jq -c --arg latest "$latest" -Rn '
               [
                 inputs |
                 split("|") |
