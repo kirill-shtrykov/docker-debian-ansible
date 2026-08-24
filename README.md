@@ -6,7 +6,9 @@
 Debian Docker container for Ansible roles testing.
 
 ## Tags
-- [`12.8`, `latest`](https://github.com/kirill-shtrykov/docker-debian-ansible/blob/main/Dockerfile)
+- [`13`, `13.6`, `latest`](https://github.com/kirill-shtrykov/docker-debian-ansible/blob/debian-13.6/debian-13/Dockerfile)
+- [`12`, `12.15`](https://github.com/kirill-shtrykov/docker-debian-ansible/blob/debian-12.15/debian-12/Dockerfile)
+- [`12.8`](https://github.com/kirill-shtrykov/docker-debian-ansible/blob/12.8/Dockerfile)
 
 ## Usage
 ```bash
