@@ -5,18 +5,17 @@ on:
     branches:
       - main
     paths:
-      - "debian-12/**"
-      - "debian-13/**"
+      - "debian-*/**"
 
   workflow_dispatch:
-
-permissions:
-  contents: read
 
 jobs:
   changes:
     name: Detect changed images
     runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
 
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
@@ -27,34 +26,124 @@ jobs:
         with:
           fetch-depth: 2
 
-      - name: Detect changes
+      - name: Detect changed images
         id: matrix
         shell: bash
         run: |
-          images=()
+          set -euo pipefail
 
-          if git diff --quiet HEAD^ HEAD -- debian-12; then
-            :
-          else
-            images+=('{"name":"12","path":"debian-12"}')
+          latest="$(
+            find . -maxdepth 1 -type d -name 'debian-[0-9]*' \
+              -printf '%f\n' |
+            sed 's/^debian-//' |
+            sort -n |
+            tail -n 1
+          )"
+
+          if [ -z "$latest" ]; then
+            echo "No Debian images found"
+            exit 1
           fi
 
-          if git diff --quiet HEAD^ HEAD -- debian-13; then
-            :
+          echo "Latest Debian version: $latest"
+
+          # On workflow_dispatch or first push the before-SHA is empty or all-zeros —
+          # treat that as "build everything".
+          before="${{ github.event.before }}"
+          null_sha="0000000000000000000000000000000000000000"
+
+          if [ -z "$before" ] || [ "$before" = "$null_sha" ]; then
+            echo "No before SHA — including all Debian images"
+            changed_dirs="$(
+              find . -maxdepth 1 -type d -name 'debian-[0-9]*' -printf '%f\n'
+            )"
           else
-            images+=('{"name":"13","path":"debian-13"}')
+            changed_dirs="$(
+              git diff --name-only "$before" "${{ github.sha }}" |
+              grep -oP '^debian-[0-9]+(?=/)' |
+              sort -u ||
+              true
+            )"
           fi
 
-          matrix=$(printf '%s\n' "${images[@]}" | jq -s -c '{include: .}')
+          if [ -z "$changed_dirs" ]; then
+            echo "matrix={\"include\":[]}" >> "$GITHUB_OUTPUT"
+            echo "No changed Debian images"
+            exit 0
+          fi
+
+          matrix="$(
+            echo "$changed_dirs" |
+            jq --arg latest "$latest" -Rn '
+              [inputs | select(length > 0)] |
+              map(
+                . as $dir |
+                ($dir | ltrimstr("debian-")) as $ver |
+                {
+                  version: $ver,
+                  path:    $dir,
+                  image_version: (
+                    try (
+                      ($dir + "/Dockerfile") |
+                      input |
+                      split("\n")[] |
+                      select(startswith("ENV IMAGE_VERSION=")) |
+                      ltrimstr("ENV IMAGE_VERSION=") |
+                      split(" ")[0] |
+                      ltrimstr("\"") | rtrimstr("\"")
+                    ) catch ""
+                  ),
+                  latest: ($ver == $latest)
+                }
+              ) |
+              { include: . }
+            '
+          )"
+
+          # Fallback: extract image_version via sed when jq input() is unavailable
+          # (jq input() reads from file list; we instead pass the value via awk).
+          # Re-build the matrix with image_version extracted from each Dockerfile.
+          matrix="$(
+            echo "$changed_dirs" |
+            while IFS= read -r dir; do
+              ver="${dir#debian-}"
+              image_version="$(
+                sed -n 's/^ENV IMAGE_VERSION=//p' "$dir/Dockerfile" |
+                tr -d '[:space:]"' |
+                awk '{print $1}'
+              )"
+              echo "$ver|$dir|$image_version"
+            done |
+            jq --arg latest "$latest" -Rn '
+              [
+                inputs |
+                split("|") |
+                {
+                  version:       .[0],
+                  path:          .[1],
+                  image_version: .[2],
+                  latest:        (.[0] == $latest)
+                }
+              ] |
+              { include: . }
+            '
+          )"
 
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
-          echo "Changed images: $matrix"
+
+          echo "Build matrix:"
+          echo "$matrix" | jq .
 
   publish:
-    name: Publish Debian ${{ matrix.name }}
+    name: Publish Debian ${{ matrix.version }}
     needs: changes
+
     if: needs.changes.outputs.matrix != '{"include":[]}'
+
     runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
 
     strategy:
       fail-fast: false
@@ -63,6 +152,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
@@ -76,7 +167,9 @@ jobs:
         with:
           images: kirillshtrykov/debian-ansible
           tags: |
-            type=raw,value=${{ matrix.name }}
+            type=raw,value=${{ matrix.image_version }}
+            type=raw,value=${{ matrix.version }}
+            type=raw,value=latest,enable=${{ matrix.latest }}
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -86,3 +179,40 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Create Git tag
+        env:
+          VERSION: ${{ matrix.image_version }}
+        run: |
+          set -euo pipefail
+
+          tag="debian-${VERSION}"
+
+          if git rev-parse "$tag" >/dev/null 2>&1; then
+            echo "Tag $tag already exists, skipping"
+            exit 0
+          fi
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git tag "$tag" "$GITHUB_SHA"
+          git push origin "$tag"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ matrix.image_version }}
+        run: |
+          set -euo pipefail
+
+          tag="debian-${VERSION}"
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists, skipping"
+            exit 0
+          fi
+
+          gh release create "$tag" \
+            --title "$tag" \
+            --generate-notes
