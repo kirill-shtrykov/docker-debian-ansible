@@ -20,5 +20,5 @@ If you find a bug or have an idea for a feature, feel free to write an
 [issue](https://github.com/kirill-shtrykov/debian-ansible/issues) or make a PR.
 
 ## See Also
-- Docker Hub: [kirillshtrykov/debian-ansible](https://hub.docker.com/repository/docker/kirillshtrykov/debian-ansible)
+- Docker Hub: [kirillshtrykov/debian-ansible](https://hub.docker.com/r/kirillshtrykov/debian-ansible)
 - Github: [kirill-shtrykov/docker-debian-ansible](https://github.com/kirill-shtrykov/docker-debian-ansible/)
