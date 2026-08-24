@@ -1,6 +1,6 @@
-FROM debian:12.8
+FROM debian:13.0
 
-ENV IMAGE_VERSION=12.8
+ENV IMAGE_VERSION=13.0
 
 LABEL maintainer="Kirill Shtrykov" \
       org.opencontainers.image.version=${IMAGE_VERSION} \
@@ -15,6 +15,7 @@ RUN apt update && \
     apt upgrade -y && \
     apt install -y \
       python3 \
+      python3-debian \
       sudo \
       bash \
       net-tools \

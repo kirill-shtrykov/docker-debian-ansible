@@ -1,0 +1,104 @@
+name: Update Debian base images
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    name: Update Debian ${{ matrix.version }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - version: "12"
+            directory: debian-12
+
+          - version: "13"
+            directory: debian-13
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Get latest Debian version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="$(
+            curl --fail --silent --show-error \
+              "https://hub.docker.com/v2/repositories/library/debian/tags?page_size=100&name=${{ matrix.version }}." |
+            jq -r '
+              .results[]
+              | .name
+              | select(test("^${{ matrix.version }}\\.[0-9]+$"))
+            ' |
+            sort -V |
+            tail -n 1
+          )"
+
+          if [ -z "$version" ]; then
+            echo "Failed to determine latest Debian ${{ matrix.version }} version"
+            exit 1
+          fi
+
+          echo "Latest Debian ${{ matrix.version }} version: $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Update Dockerfile
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          file="${{ matrix.directory }}/Dockerfile"
+
+          sed -i \
+            -E "s|^FROM debian:${{ matrix.version }}(\.[0-9]+)?$|FROM debian:${VERSION}|" \
+            "$file"
+
+          sed -i \
+            -E "s|^ENV IMAGE_VERSION=.*$|ENV IMAGE_VERSION=${VERSION}|" \
+            "$file"
+
+          echo "Result:"
+          grep -E '^(FROM|ENV IMAGE_VERSION)' "$file"
+
+      - name: Check for changes
+        id: changes
+        shell: bash
+        run: |
+          if git diff --quiet -- "${{ matrix.directory }}/Dockerfile"; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No changes"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+
+            echo "Changes detected:"
+            git diff -- "${{ matrix.directory }}/Dockerfile"
+          fi
+
+      - name: Create pull request
+        if: steps.changes.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "Update Debian ${{ matrix.version }} to ${{ steps.version.outputs.version }}"
+          title: "Update Debian ${{ matrix.version }} to ${{ steps.version.outputs.version }}"
+          body: |
+            Updates the Debian ${{ matrix.version }} base image
+            to version `${{ steps.version.outputs.version }}`.
+
+            This pull request was created automatically.
+          branch: "update/debian-${{ matrix.version }}"
+          delete-branch: true
