@@ -1,6 +1,6 @@
-FROM debian:13.6
+FROM debian:13.7
 
-ENV IMAGE_VERSION=13.6
+ENV IMAGE_VERSION=13.7
 
 LABEL maintainer="Kirill Shtrykov" \
       org.opencontainers.image.version=${IMAGE_VERSION} \
